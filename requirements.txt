@@ -1,0 +1,10 @@
+# Runtime — cross-platform
+Pillow>=10.0.0
+psutil>=5.9.0
+
+# Runtime — Windows only (not installed in Linux dev/test environment)
+pyautogui>=0.9.54; sys_platform == "win32"
+pywin32>=306; sys_platform == "win32"
+
+# Build
+pyinstaller>=6.0.0

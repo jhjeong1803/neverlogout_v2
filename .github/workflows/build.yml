@@ -1,0 +1,58 @@
+name: Build keepalive.exe
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Run unit tests on Linux (fast, no Windows API needed — all mocked)
+  # -------------------------------------------------------------------------
+  test:
+    name: Unit tests (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install Pillow psutil pytest
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+  # -------------------------------------------------------------------------
+  # Build the Windows .exe with PyInstaller
+  # -------------------------------------------------------------------------
+  build:
+    name: Build .exe (Windows)
+    runs-on: windows-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        run: pyinstaller build/keepalive.spec --distpath dist --workpath build/work
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keepalive-exe
+          path: dist/keepalive.exe
+          if-no-files-found: error
+          retention-days: 30
