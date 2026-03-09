@@ -194,6 +194,8 @@ def run_intpc_keepalive(
 
             log_fn("intPC: checking for timeout popup…")
 
+            if _PYAUTOGUI_AVAILABLE:
+                pyautogui.moveTo(5, 5, duration=0)
             img = capture_screenshot()
             popup_detected = check_detection_points(
                 img, INTPC_DETECTION_POINTS, INTPC_COLOR_TOLERANCE
