@@ -38,7 +38,7 @@ INTPC_CLICK_Y = 620
 # =============================================================================
 
 INTPC_PROCESS_NAME = "desktop-viewer.exe"
-INTPC_WINDOW_TITLE = "인터넷 PC"  # partial match is fine
+INTPC_WINDOW_TITLE = "서울대학교병원 인터넷 PC"  # partial match is fine
 
 # =============================================================================
 # Timing (seconds)
