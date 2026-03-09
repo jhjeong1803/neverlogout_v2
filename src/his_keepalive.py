@@ -58,30 +58,33 @@ def run_his_keepalive(
         if not enabled_var.get():
             continue
 
-        with jiggle_lock:
-            # Re-check enabled state in case checkbox was unticked while
-            # we were waiting for the lock.
-            if not enabled_var.get():
-                continue
+        try:
+            with jiggle_lock:
+                # Re-check enabled state in case checkbox was unticked while
+                # we were waiting for the lock.
+                if not enabled_var.get():
+                    continue
 
-            log_fn("HIS: checking for timeout popup…")
+                log_fn("HIS: checking for timeout popup…")
 
-            if _PYAUTOGUI_AVAILABLE:
-                pyautogui.moveTo(5, 5, duration=0)
-            img = capture_screenshot()
-            popup_detected = check_detection_points(
-                img, HIS_DETECTION_POINTS, HIS_COLOR_TOLERANCE
-            )
+                if _PYAUTOGUI_AVAILABLE:
+                    pyautogui.moveTo(5, 5, duration=0)
+                img = capture_screenshot()
+                popup_detected = check_detection_points(
+                    img, HIS_DETECTION_POINTS, HIS_COLOR_TOLERANCE
+                )
 
-            if popup_detected:
-                if dry_run:
-                    log_fn(
-                        f"[DRY RUN] HIS popup detected — would click ({HIS_CLICK_X}, {HIS_CLICK_Y})"
-                    )
+                if popup_detected:
+                    if dry_run:
+                        log_fn(
+                            f"[DRY RUN] HIS popup detected — would click ({HIS_CLICK_X}, {HIS_CLICK_Y})"
+                        )
+                    else:
+                        pyautogui.click(HIS_CLICK_X, HIS_CLICK_Y)
+                        log_fn(
+                            f"HIS popup detected — clicked 연장 at ({HIS_CLICK_X}, {HIS_CLICK_Y})"
+                        )
                 else:
-                    pyautogui.click(HIS_CLICK_X, HIS_CLICK_Y)
-                    log_fn(
-                        f"HIS popup detected — clicked 연장 at ({HIS_CLICK_X}, {HIS_CLICK_Y})"
-                    )
-            else:
-                log_fn("HIS: no popup detected.")
+                    log_fn("HIS: no popup detected.")
+        except Exception as exc:  # noqa: BLE001
+            log_fn(f"HIS: error during check — {exc}. Will retry next cycle.")

@@ -46,9 +46,15 @@ except ImportError:
 
 try:
     import win32gui
+    import win32process
+    import win32api
+    import win32con
     _WIN32GUI_AVAILABLE = True
 except ImportError:
-    win32gui = None  # type: ignore[assignment]
+    win32gui = None      # type: ignore[assignment]
+    win32process = None  # type: ignore[assignment]
+    win32api = None      # type: ignore[assignment]
+    win32con = None      # type: ignore[assignment]
     _WIN32GUI_AVAILABLE = False
 
 from constants import (
@@ -99,12 +105,44 @@ def _is_foreground(hwnd: int) -> bool:
 def _bring_to_front(hwnd: int) -> bool:
     """
     Attempt to set *hwnd* as the foreground window.
+
+    Windows restricts SetForegroundWindow to the process that currently owns
+    the foreground. When called from a background process it silently fails
+    and only flashes the taskbar. The workaround is to temporarily attach our
+    thread's input queue to the target window's thread, which grants permission
+    to steal focus, then detach afterwards.
+
     Returns True on success, False if the call raised or win32gui is absent.
     """
     if not _WIN32GUI_AVAILABLE or not hwnd:
         return False
     try:
-        win32gui.SetForegroundWindow(hwnd)
+        # Restore the window first in case it is minimised.
+        placement = win32gui.GetWindowPlacement(hwnd)
+        if placement[1] == win32con.SW_SHOWMINIMIZED:
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+
+        # Attach thread input queues so SetForegroundWindow is always granted.
+        target_tid, _ = win32process.GetWindowThreadProcessId(hwnd)
+        current_tid   = win32api.GetCurrentThreadId()
+        attached = False
+        if target_tid != current_tid:
+            try:
+                win32process.AttachThreadInput(current_tid, target_tid, True)
+                attached = True
+            except Exception:  # noqa: BLE001
+                pass  # Proceed anyway; it may still work.
+
+        try:
+            win32gui.BringWindowToTop(hwnd)
+            win32gui.SetForegroundWindow(hwnd)
+        finally:
+            if attached:
+                try:
+                    win32process.AttachThreadInput(current_tid, target_tid, False)
+                except Exception:  # noqa: BLE001
+                    pass
+
         return True
     except Exception:  # noqa: BLE001 — win32gui can raise various errors
         return False
@@ -149,67 +187,70 @@ def run_intpc_keepalive(
         if not enabled_var.get():
             continue
 
-        # ------------------------------------------------------------------ #
-        # Step 1: process check                                               #
-        # ------------------------------------------------------------------ #
-        if not _is_process_running():
-            log_fn(f"intPC: {INTPC_PROCESS_NAME} not running — skipping.")
-            continue
-
-        # ------------------------------------------------------------------ #
-        # Step 2: foreground check + conditional bring-to-front              #
-        # ------------------------------------------------------------------ #
-        hwnd = _find_intpc_window()
-
-        if not hwnd:
-            log_fn("intPC: window not found — skipping.")
-            continue
-
-        already_foreground = _is_foreground(hwnd)
-
-        if not already_foreground:
-            if not is_user_idle(last_real_input_time):
-                log_fn("intPC: window not in foreground but user is active — skipping.")
+        try:
+            # ------------------------------------------------------------------ #
+            # Step 1: process check                                               #
+            # ------------------------------------------------------------------ #
+            if not _is_process_running():
+                log_fn(f"intPC: {INTPC_PROCESS_NAME} not running — skipping.")
                 continue
 
-            # User is idle — safe to bring intPC to front.
-            if dry_run:
-                log_fn("[DRY RUN] intPC: would bring window to foreground.")
-            else:
-                success = _bring_to_front(hwnd)
-                if success:
-                    log_fn("intPC: brought window to foreground.")
-                else:
-                    log_fn("intPC: failed to bring window to foreground — skipping.")
+            # ------------------------------------------------------------------ #
+            # Step 2: foreground check + conditional bring-to-front              #
+            # ------------------------------------------------------------------ #
+            hwnd = _find_intpc_window()
+
+            if not hwnd:
+                log_fn("intPC: window not found — skipping.")
+                continue
+
+            already_foreground = _is_foreground(hwnd)
+
+            if not already_foreground:
+                if not is_user_idle(last_real_input_time):
+                    log_fn("intPC: window not in foreground but user is active — skipping.")
                     continue
 
-        # ------------------------------------------------------------------ #
-        # Step 3 & 4: screenshot + popup detection + optional click           #
-        # ------------------------------------------------------------------ #
-        with jiggle_lock:
-            # Re-check enabled state in case checkbox was unticked while
-            # we were waiting for the lock.
-            if not enabled_var.get():
-                continue
-
-            log_fn("intPC: checking for timeout popup…")
-
-            if _PYAUTOGUI_AVAILABLE:
-                pyautogui.moveTo(5, 5, duration=0)
-            img = capture_screenshot()
-            popup_detected = check_detection_points(
-                img, INTPC_DETECTION_POINTS, INTPC_COLOR_TOLERANCE
-            )
-
-            if popup_detected:
+                # User is idle — safe to bring intPC to front.
                 if dry_run:
-                    log_fn(
-                        f"[DRY RUN] intPC popup detected — would click ({INTPC_CLICK_X}, {INTPC_CLICK_Y})"
-                    )
+                    log_fn("[DRY RUN] intPC: would bring window to foreground.")
                 else:
-                    pyautogui.click(INTPC_CLICK_X, INTPC_CLICK_Y)
-                    log_fn(
-                        f"intPC popup detected — clicked 연장 at ({INTPC_CLICK_X}, {INTPC_CLICK_Y})"
-                    )
-            else:
-                log_fn("intPC: no popup detected.")
+                    success = _bring_to_front(hwnd)
+                    if success:
+                        log_fn("intPC: brought window to foreground.")
+                    else:
+                        log_fn("intPC: failed to bring window to foreground — skipping.")
+                        continue
+
+            # ------------------------------------------------------------------ #
+            # Step 3 & 4: screenshot + popup detection + optional click           #
+            # ------------------------------------------------------------------ #
+            with jiggle_lock:
+                # Re-check enabled state in case checkbox was unticked while
+                # we were waiting for the lock.
+                if not enabled_var.get():
+                    continue
+
+                log_fn("intPC: checking for timeout popup…")
+
+                if _PYAUTOGUI_AVAILABLE:
+                    pyautogui.moveTo(5, 5, duration=0)
+                img = capture_screenshot()
+                popup_detected = check_detection_points(
+                    img, INTPC_DETECTION_POINTS, INTPC_COLOR_TOLERANCE
+                )
+
+                if popup_detected:
+                    if dry_run:
+                        log_fn(
+                            f"[DRY RUN] intPC popup detected — would click ({INTPC_CLICK_X}, {INTPC_CLICK_Y})"
+                        )
+                    else:
+                        pyautogui.click(INTPC_CLICK_X, INTPC_CLICK_Y)
+                        log_fn(
+                            f"intPC popup detected — clicked 연장 at ({INTPC_CLICK_X}, {INTPC_CLICK_Y})"
+                        )
+                else:
+                    log_fn("intPC: no popup detected.")
+        except Exception as exc:  # noqa: BLE001
+            log_fn(f"intPC: error during check — {exc}. Will retry next cycle.")
