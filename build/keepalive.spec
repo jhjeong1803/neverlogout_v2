@@ -10,14 +10,17 @@
 import os
 
 # SPECPATH is the directory containing this spec file (i.e. build/).
-# Resolve the src/ directory relative to it.
-src_dir = os.path.abspath(os.path.join(SPECPATH, '..', 'src'))
+# Resolve the src/ and build/ directories relative to it.
+src_dir   = os.path.abspath(os.path.join(SPECPATH, '..', 'src'))
+build_dir = os.path.abspath(SPECPATH)
+icon_path = os.path.join(build_dir, 'keepalive.ico')
 
 a = Analysis(
     [os.path.join(src_dir, 'main.py')],
     pathex=[src_dir],
     binaries=[],
-    datas=[],
+    # Bundle the icon so main.py can load it at runtime via sys._MEIPASS.
+    datas=[(icon_path, '.')],
     hiddenimports=[
         # pywin32 components that PyInstaller sometimes misses
         'win32api',
@@ -44,6 +47,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
+    icon=icon_path,
     name='keepalive',
     debug=False,
     bootloader_ignore_signals=False,

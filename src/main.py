@@ -11,6 +11,7 @@ Run with --dry-run to log would-be actions without clicking or moving.
 """
 
 import argparse
+import os
 import sys
 import threading
 import time
@@ -26,6 +27,22 @@ except ImportError:
     pyautogui = None  # will surface as an error only when a module tries to click
 
 from constants import LOG_MAX_LINES, WINDOW_ALWAYS_ON_TOP
+
+STAMP = "JJH 2026.03"
+
+# ---------------------------------------------------------------------------
+# Icon path helper — works both in development and inside a PyInstaller bundle
+# ---------------------------------------------------------------------------
+
+def _icon_path() -> str:
+    """Return the absolute path to keepalive.ico, whether bundled or not."""
+    if getattr(sys, "frozen", False):
+        # Running inside a PyInstaller .exe — resources are in sys._MEIPASS
+        base = sys._MEIPASS  # type: ignore[attr-defined]
+    else:
+        # Development: icon lives in build/ next to src/
+        base = os.path.join(os.path.dirname(__file__), "..", "build")
+    return os.path.join(base, "keepalive.ico")
 from jiggler import run_jiggler
 from logger import Logger
 
@@ -105,6 +122,12 @@ class KeepAliveApp:
         root.resizable(False, False)
         root.attributes("-topmost", WINDOW_ALWAYS_ON_TOP)
 
+        # Window icon (silently skip if the .ico is missing in dev)
+        try:
+            root.iconbitmap(_icon_path())
+        except Exception:
+            pass
+
         # ---- Checkbox frame ----
         cb_frame = tk.Frame(root, padx=10, pady=8)
         cb_frame.pack(fill=tk.X)
@@ -165,12 +188,24 @@ class KeepAliveApp:
         self.his_var.trace_add("write",    self._on_his_toggle)
         self.intpc_var.trace_add("write",  self._on_intpc_toggle)
 
+        # ---- Stamp ----
+        stamp_font = tkfont.Font(family="Courier", size=8)
+        tk.Label(
+            root,
+            text=STAMP,
+            font=stamp_font,
+            fg="#888888",
+            bg=root.cget("bg"),
+            anchor=tk.E,
+            padx=6,
+        ).pack(fill=tk.X)
+
         # ---- Window close ----
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # ---- Size & position ----
         root.update_idletasks()
-        root.geometry("420x290")
+        root.geometry("420x305")
 
         self.logger.log("KeepAlive ready." + (" [DRY RUN]" if self.dry_run else ""))
 
