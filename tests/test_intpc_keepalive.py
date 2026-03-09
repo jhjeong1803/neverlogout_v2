@@ -231,7 +231,14 @@ class TestBringToFront:
         with (
             patch.object(intpc_keepalive, "_WIN32GUI_AVAILABLE", True),
             patch("intpc_keepalive.win32gui") as mock_w,
+            patch("intpc_keepalive.win32process") as mock_proc,
+            patch("intpc_keepalive.win32api") as mock_api,
+            patch("intpc_keepalive.win32con") as mock_con,
         ):
+            mock_w.GetWindowPlacement.return_value = (0, 1, 0, (0, 0), (0, 0, 0, 0))
+            mock_con.SW_SHOWMINIMIZED = 2  # placement[1]==1, so ShowWindow not called
+            mock_proc.GetWindowThreadProcessId.return_value = (1, 2)
+            mock_api.GetCurrentThreadId.return_value = 2  # same tid → no attach
             _bring_to_front(5)
             mock_w.SetForegroundWindow.assert_called_once_with(5)
 
@@ -239,7 +246,14 @@ class TestBringToFront:
         with (
             patch.object(intpc_keepalive, "_WIN32GUI_AVAILABLE", True),
             patch("intpc_keepalive.win32gui") as mock_w,
+            patch("intpc_keepalive.win32process") as mock_proc,
+            patch("intpc_keepalive.win32api") as mock_api,
+            patch("intpc_keepalive.win32con") as mock_con,
         ):
+            mock_w.GetWindowPlacement.return_value = (0, 1, 0, (0, 0), (0, 0, 0, 0))
+            mock_con.SW_SHOWMINIMIZED = 2  # placement[1]==1, so ShowWindow not called
+            mock_proc.GetWindowThreadProcessId.return_value = (1, 2)
+            mock_api.GetCurrentThreadId.return_value = 2  # same tid → no attach
             mock_w.SetForegroundWindow.return_value = None
             assert _bring_to_front(5) is True
 
