@@ -13,13 +13,48 @@ Thread model:
     hold the lock during their screenshot+click cycles without conflict.
   - Sets jiggle_in_progress around the literal mouse move so the idle
     monitor can distinguish synthetic jiggler movement from real user input.
+  - Calls SetThreadExecutionState(ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED)
+    on entry and clears it on exit — mouse movement alone does not suppress
+    the Windows display timeout.
 """
 
+import ctypes
 import threading
 
-import pyautogui
+try:
+    import pyautogui
+    _PYAUTOGUI_AVAILABLE = True
+except ImportError:
+    pyautogui = None  # type: ignore[assignment]
+    _PYAUTOGUI_AVAILABLE = False
 
 from constants import JIGGLE_INTERVAL
+
+# ---------------------------------------------------------------------------
+# Windows SetThreadExecutionState — prevents display/system sleep
+# ---------------------------------------------------------------------------
+
+_ES_CONTINUOUS       = 0x80000000
+_ES_SYSTEM_REQUIRED  = 0x00000001
+_ES_DISPLAY_REQUIRED = 0x00000002
+
+
+def _set_keep_awake(enable: bool) -> None:
+    """
+    Ask Windows to keep the display and system awake (enable=True) or release
+    that request (enable=False).
+
+    SetThreadExecutionState is the correct API for preventing screensaver /
+    display timeout — mouse movement alone does not suppress display sleep.
+    Silently ignored on non-Windows platforms.
+    """
+    try:
+        flags = _ES_CONTINUOUS
+        if enable:
+            flags |= _ES_SYSTEM_REQUIRED | _ES_DISPLAY_REQUIRED
+        ctypes.windll.kernel32.SetThreadExecutionState(flags)  # type: ignore[attr-defined]
+    except AttributeError:
+        pass  # Not on Windows (Linux dev environment)
 
 
 def run_jiggler(
@@ -42,29 +77,35 @@ def run_jiggler(
         log_fn:              Function to append a message to the GUI log.
         dry_run:             If True, log the would-be action instead of moving.
     """
-    while not stop_event.wait(timeout=JIGGLE_INTERVAL):
-        # stop_event.wait returns False on timeout (keep looping),
-        # True if the event was set (stop requested — while condition exits).
+    _set_keep_awake(True)
+    try:
+        while not stop_event.wait(timeout=JIGGLE_INTERVAL):
+            # stop_event.wait returns False on timeout (keep looping),
+            # True if the event was set (stop requested — while condition exits).
 
-        if not enabled_var.get():
-            continue
-
-        # Wait for the lock: if Module 2 or 3 is mid-click-cycle, block here
-        # until they release. The lock is held only briefly by the jiggler.
-        with jiggle_lock:
-            # Re-check enabled state in case checkbox was unticked while
-            # we were waiting for the lock.
             if not enabled_var.get():
                 continue
 
-            # Signal idle monitor: the move about to happen is synthetic.
-            jiggle_in_progress.set()
-            try:
-                if dry_run:
-                    log_fn("[DRY RUN] Would jiggle mouse +1px / -1px")
-                else:
-                    pyautogui.moveRel(1, 0, duration=0)
-                    pyautogui.moveRel(-1, 0, duration=0)
-            finally:
-                # Always clear the flag, even if pyautogui raises.
-                jiggle_in_progress.clear()
+            # Wait for the lock: if Module 2 or 3 is mid-click-cycle, block here
+            # until they release. The lock is held only briefly by the jiggler.
+            with jiggle_lock:
+                # Re-check enabled state in case checkbox was unticked while
+                # we were waiting for the lock.
+                if not enabled_var.get():
+                    continue
+
+                # Signal idle monitor: the move about to happen is synthetic.
+                jiggle_in_progress.set()
+                try:
+                    if dry_run:
+                        log_fn("[DRY RUN] Would jiggle mouse +1px / -1px")
+                    elif _PYAUTOGUI_AVAILABLE:
+                        pyautogui.moveRel(1, 0, duration=0)
+                        pyautogui.moveRel(-1, 0, duration=0)
+                except Exception as exc:  # noqa: BLE001
+                    log_fn(f"Jiggler: error during move — {exc}. Will retry next cycle.")
+                finally:
+                    # Always clear the flag, even if pyautogui raises.
+                    jiggle_in_progress.clear()
+    finally:
+        _set_keep_awake(False)
