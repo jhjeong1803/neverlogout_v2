@@ -108,11 +108,18 @@ def _bring_to_front(hwnd: int) -> bool:
 
     Windows restricts SetForegroundWindow to the process that currently owns
     the foreground. When called from a background process it silently fails
-    and only flashes the taskbar. The workaround is to temporarily attach our
-    thread's input queue to the target window's thread, which grants permission
-    to steal focus, then detach afterwards.
+    and only flashes the taskbar. Two techniques are combined to work around
+    this:
 
-    Returns True on success, False if the call raised or win32gui is absent.
+    1. keybd_event Alt trick — sending a synthetic Alt keydown/keyup causes
+       Windows to treat our process as having recent input, which grants
+       permission to call SetForegroundWindow from a background process.
+
+    2. AttachThreadInput — attaches our thread's input queue to the target
+       window's thread as a secondary measure.
+
+    Returns True if GetForegroundWindow() == hwnd after the attempt,
+    False otherwise (including when win32gui is absent).
     """
     if not _WIN32GUI_AVAILABLE or not hwnd:
         return False
@@ -122,7 +129,19 @@ def _bring_to_front(hwnd: int) -> bool:
         if placement[1] == win32con.SW_SHOWMINIMIZED:
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
 
-        # Attach thread input queues so SetForegroundWindow is always granted.
+        # Technique 1: keybd_event Alt trick.
+        # A synthetic Alt keydown/keyup convinces Windows that our process has
+        # active user input, granting SetForegroundWindow permission even when
+        # called from a background process.
+        _VK_LMENU        = 0xA4
+        _KEYEVENTF_KEYUP = 0x0002
+        try:
+            win32api.keybd_event(_VK_LMENU, 0, 0, 0)
+            win32api.keybd_event(_VK_LMENU, 0, _KEYEVENTF_KEYUP, 0)
+        except Exception:  # noqa: BLE001
+            pass  # Non-fatal; technique 2 may still succeed.
+
+        # Technique 2: Attach thread input queues.
         target_tid, _ = win32process.GetWindowThreadProcessId(hwnd)
         current_tid   = win32api.GetCurrentThreadId()
         attached = False
@@ -131,7 +150,7 @@ def _bring_to_front(hwnd: int) -> bool:
                 win32process.AttachThreadInput(current_tid, target_tid, True)
                 attached = True
             except Exception:  # noqa: BLE001
-                pass  # Proceed anyway; it may still work.
+                pass  # Proceed anyway; technique 1 may be sufficient.
 
         try:
             win32gui.BringWindowToTop(hwnd)
@@ -143,7 +162,8 @@ def _bring_to_front(hwnd: int) -> bool:
                 except Exception:  # noqa: BLE001
                     pass
 
-        return True
+        # Verify the foreground actually changed rather than assuming success.
+        return win32gui.GetForegroundWindow() == hwnd
     except Exception:  # noqa: BLE001 — win32gui can raise various errors
         return False
 

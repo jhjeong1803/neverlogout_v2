@@ -227,6 +227,15 @@ class TestBringToFront:
         with patch.object(intpc_keepalive, "_WIN32GUI_AVAILABLE", True):
             assert _bring_to_front(0) is False
 
+    def _setup_bring_mock(self, mock_w, mock_proc, mock_api, mock_con, hwnd=5):
+        """Common mock setup for _bring_to_front tests."""
+        mock_w.GetWindowPlacement.return_value = (0, 1, 0, (0, 0), (0, 0, 0, 0))
+        mock_con.SW_SHOWMINIMIZED = 2  # placement[1]==1, so ShowWindow not called
+        mock_proc.GetWindowThreadProcessId.return_value = (1, 2)
+        mock_api.GetCurrentThreadId.return_value = 2  # same tid → no attach
+        # Simulate foreground switch succeeding: GetForegroundWindow returns hwnd.
+        mock_w.GetForegroundWindow.return_value = hwnd
+
     def test_calls_set_foreground_window(self):
         with (
             patch.object(intpc_keepalive, "_WIN32GUI_AVAILABLE", True),
@@ -235,12 +244,23 @@ class TestBringToFront:
             patch("intpc_keepalive.win32api") as mock_api,
             patch("intpc_keepalive.win32con") as mock_con,
         ):
-            mock_w.GetWindowPlacement.return_value = (0, 1, 0, (0, 0), (0, 0, 0, 0))
-            mock_con.SW_SHOWMINIMIZED = 2  # placement[1]==1, so ShowWindow not called
-            mock_proc.GetWindowThreadProcessId.return_value = (1, 2)
-            mock_api.GetCurrentThreadId.return_value = 2  # same tid → no attach
+            self._setup_bring_mock(mock_w, mock_proc, mock_api, mock_con)
             _bring_to_front(5)
             mock_w.SetForegroundWindow.assert_called_once_with(5)
+
+    def test_calls_keybd_event_alt_trick(self):
+        """Alt keydown+keyup must be sent before SetForegroundWindow."""
+        with (
+            patch.object(intpc_keepalive, "_WIN32GUI_AVAILABLE", True),
+            patch("intpc_keepalive.win32gui") as mock_w,
+            patch("intpc_keepalive.win32process") as mock_proc,
+            patch("intpc_keepalive.win32api") as mock_api,
+            patch("intpc_keepalive.win32con") as mock_con,
+        ):
+            self._setup_bring_mock(mock_w, mock_proc, mock_api, mock_con)
+            _bring_to_front(5)
+            # keybd_event must be called twice: Alt down then Alt up.
+            assert mock_api.keybd_event.call_count == 2
 
     def test_returns_true_on_success(self):
         with (
@@ -250,19 +270,28 @@ class TestBringToFront:
             patch("intpc_keepalive.win32api") as mock_api,
             patch("intpc_keepalive.win32con") as mock_con,
         ):
-            mock_w.GetWindowPlacement.return_value = (0, 1, 0, (0, 0), (0, 0, 0, 0))
-            mock_con.SW_SHOWMINIMIZED = 2  # placement[1]==1, so ShowWindow not called
-            mock_proc.GetWindowThreadProcessId.return_value = (1, 2)
-            mock_api.GetCurrentThreadId.return_value = 2  # same tid → no attach
-            mock_w.SetForegroundWindow.return_value = None
+            self._setup_bring_mock(mock_w, mock_proc, mock_api, mock_con)
             assert _bring_to_front(5) is True
+
+    def test_returns_false_when_foreground_unchanged(self):
+        """Return False when GetForegroundWindow != hwnd after the attempt."""
+        with (
+            patch.object(intpc_keepalive, "_WIN32GUI_AVAILABLE", True),
+            patch("intpc_keepalive.win32gui") as mock_w,
+            patch("intpc_keepalive.win32process") as mock_proc,
+            patch("intpc_keepalive.win32api") as mock_api,
+            patch("intpc_keepalive.win32con") as mock_con,
+        ):
+            self._setup_bring_mock(mock_w, mock_proc, mock_api, mock_con)
+            mock_w.GetForegroundWindow.return_value = 999  # different window
+            assert _bring_to_front(5) is False
 
     def test_returns_false_on_exception(self):
         with (
             patch.object(intpc_keepalive, "_WIN32GUI_AVAILABLE", True),
             patch("intpc_keepalive.win32gui") as mock_w,
         ):
-            mock_w.SetForegroundWindow.side_effect = Exception("access denied")
+            mock_w.GetWindowPlacement.side_effect = Exception("access denied")
             assert _bring_to_front(5) is False
 
 
