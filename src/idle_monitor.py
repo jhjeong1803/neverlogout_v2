@@ -70,16 +70,20 @@ def _get_mouse_pos() -> tuple[int, int]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def is_user_idle(last_real_input_time: list[float]) -> bool:
+def is_user_idle(
+    last_real_input_time: list[float],
+    threshold: float = IDLE_THRESHOLD,
+) -> bool:
     """
-    Return True if no real user input has been seen for >= IDLE_THRESHOLD seconds.
+    Return True if no real user input has been seen for >= threshold seconds.
 
     Args:
         last_real_input_time: Single-element list [float] shared with main.py.
                               A list is used so any thread can mutate index 0
                               without a lock (float assignment is atomic in CPython).
+        threshold:            Idle duration in seconds (defaults to IDLE_THRESHOLD).
     """
-    return time.time() - last_real_input_time[0] >= IDLE_THRESHOLD
+    return time.time() - last_real_input_time[0] >= threshold
 
 
 def run_idle_monitor(

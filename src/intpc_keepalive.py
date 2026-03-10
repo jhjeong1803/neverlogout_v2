@@ -58,6 +58,7 @@ except ImportError:
     _WIN32GUI_AVAILABLE = False
 
 from constants import (
+    CURSOR_MOVE_IDLE_THRESHOLD,
     INTPC_CHECK_INTERVAL,
     INTPC_CLICK_X,
     INTPC_CLICK_Y,
@@ -253,7 +254,9 @@ def run_intpc_keepalive(
 
                 log_fn("intPC: checking for timeout popup…")
 
-                if _PYAUTOGUI_AVAILABLE:
+                if _PYAUTOGUI_AVAILABLE and is_user_idle(
+                    last_real_input_time, CURSOR_MOVE_IDLE_THRESHOLD
+                ):
                     pyautogui.moveTo(5, 5, duration=0)
                 img = capture_screenshot()
                 popup_detected = check_detection_points(

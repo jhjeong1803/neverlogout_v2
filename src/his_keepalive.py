@@ -27,18 +27,21 @@ except ImportError:
     _PYAUTOGUI_AVAILABLE = False
 
 from constants import (
+    CURSOR_MOVE_IDLE_THRESHOLD,
     HIS_CHECK_INTERVAL,
     HIS_CLICK_X,
     HIS_CLICK_Y,
     HIS_COLOR_TOLERANCE,
     HIS_DETECTION_POINTS,
 )
+from idle_monitor import is_user_idle
 from screen_utils import capture_screenshot, check_detection_points
 
 
 def run_his_keepalive(
     stop_event: threading.Event,
     jiggle_lock: threading.Lock,
+    last_real_input_time: list[float],  # shared with idle_monitor
     enabled_var,        # tkinter.BooleanVar — read-only, thread-safe
     log_fn,             # callable(str) -> None
     dry_run: bool = False,
@@ -47,12 +50,13 @@ def run_his_keepalive(
     HIS keepalive loop. Intended to run in a daemon thread started by main.py.
 
     Args:
-        stop_event:   Set by main.py to terminate the thread.
-        jiggle_lock:  Shared Lock; held here during screenshot+click so the
-                      jiggler cannot move the mouse mid-cycle.
-        enabled_var:  tkinter BooleanVar reflecting the HIS checkbox state.
-        log_fn:       Function to append a timestamped message to the GUI log.
-        dry_run:      If True, log would-be clicks without actually clicking.
+        stop_event:           Set by main.py to terminate the thread.
+        jiggle_lock:          Shared Lock; held here during screenshot+click so the
+                              jiggler cannot move the mouse mid-cycle.
+        last_real_input_time: Single-element list [float] updated by idle_monitor.
+        enabled_var:          tkinter BooleanVar reflecting the HIS checkbox state.
+        log_fn:               Function to append a timestamped message to the GUI log.
+        dry_run:              If True, log would-be clicks without actually clicking.
     """
     while not stop_event.wait(timeout=HIS_CHECK_INTERVAL):
         if not enabled_var.get():
@@ -67,7 +71,9 @@ def run_his_keepalive(
 
                 log_fn("HIS: checking for timeout popup…")
 
-                if _PYAUTOGUI_AVAILABLE:
+                if _PYAUTOGUI_AVAILABLE and is_user_idle(
+                    last_real_input_time, CURSOR_MOVE_IDLE_THRESHOLD
+                ):
                     pyautogui.moveTo(5, 5, duration=0)
                 img = capture_screenshot()
                 popup_detected = check_detection_points(

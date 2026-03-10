@@ -11,6 +11,7 @@ Classes:
 
 import sys
 import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -46,15 +47,18 @@ def _run_his(
     enabled: bool = True,
     dry_run: bool = False,
     stop_after: float = 0.12,
+    user_idle: bool = True,
 ) -> tuple[list[str], MagicMock]:
     """
     Run run_his_keepalive with mocked I/O for *stop_after* seconds.
     Returns (log_messages, mock_pyautogui).
     """
+    import time as _time
     messages: list[str] = []
     enabled_var = _BoolVar(enabled)
     jiggle_lock = threading.Lock()
     stop_event = _make_stop_event(auto_stop_after=stop_after)
+    last_real_input_time = [_time.time() - 300 if user_idle else _time.time()]
 
     with (
         patch("his_keepalive.HIS_CHECK_INTERVAL", 0.01),
@@ -65,6 +69,7 @@ def _run_his(
         run_his_keepalive(
             stop_event,
             jiggle_lock,
+            last_real_input_time,
             enabled_var,
             messages.append,
             dry_run=dry_run,
@@ -165,7 +170,7 @@ class TestHisDisabled:
             patch("his_keepalive.check_detection_points"),
             patch("his_keepalive.pyautogui"),
         ):
-            run_his_keepalive(stop_event, jiggle_lock, enabled_var, messages.append)
+            run_his_keepalive(stop_event, jiggle_lock, [time.time()], enabled_var, messages.append)
 
         mock_cap.assert_not_called()
 
@@ -180,7 +185,7 @@ class TestHisDisabled:
             patch("his_keepalive.check_detection_points"),
             patch("his_keepalive.pyautogui") as mock_pag,
         ):
-            run_his_keepalive(stop_event, jiggle_lock, enabled_var, lambda m: None)
+            run_his_keepalive(stop_event, jiggle_lock, [time.time()], enabled_var, lambda m: None)
 
         mock_pag.click.assert_not_called()
 
@@ -205,7 +210,7 @@ class TestHisThreadLifecycle:
         ):
             t = threading.Thread(
                 target=run_his_keepalive,
-                args=(stop, jiggle_lock, enabled_var, lambda m: None),
+                args=(stop, jiggle_lock, [time.time()], enabled_var, lambda m: None),
             )
             t.start()
             stop.set()
@@ -225,7 +230,7 @@ class TestHisThreadLifecycle:
             patch("his_keepalive.check_detection_points", return_value=False),
             patch("his_keepalive.pyautogui"),
         ):
-            run_his_keepalive(stop_event, jiggle_lock, enabled_var, lambda m: None)
+            run_his_keepalive(stop_event, jiggle_lock, [time.time()], enabled_var, lambda m: None)
 
         acquired = jiggle_lock.acquire(blocking=False)
         assert acquired, "Lock should be released after the loop exits"
@@ -248,7 +253,7 @@ class TestHisThreadLifecycle:
             patch("his_keepalive.check_detection_points", return_value=False),
             patch("his_keepalive.pyautogui"),
         ):
-            run_his_keepalive(stop_event, jiggle_lock, enabled_var, lambda m: None)
+            run_his_keepalive(stop_event, jiggle_lock, [time.time()], enabled_var, lambda m: None)
 
         assert len(call_count) > 1, "Expected multiple screenshot cycles"
 
@@ -280,7 +285,7 @@ class TestHisThreadLifecycle:
             patch("his_keepalive.check_detection_points", return_value=False),
             patch("his_keepalive.pyautogui"),
         ):
-            run_his_keepalive(stop_event, jiggle_lock, enabled_var, lambda m: None)
+            run_his_keepalive(stop_event, jiggle_lock, [time.time()], enabled_var, lambda m: None)
 
         # At least one cycle must have completed after the lock was released.
         assert len(call_count) >= 1

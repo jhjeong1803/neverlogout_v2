@@ -53,9 +53,10 @@ try:
 except ImportError:
     HIS_AVAILABLE = False
 
+from idle_monitor import run_idle_monitor
+
 try:
     from intpc_keepalive import run_intpc_keepalive
-    from idle_monitor import run_idle_monitor
     INTPC_AVAILABLE = True
 except ImportError:
     INTPC_AVAILABLE = False
@@ -209,6 +210,19 @@ class KeepAliveApp:
 
         self.logger.log("KeepAlive ready." + (" [DRY RUN]" if self.dry_run else ""))
 
+        # Start idle monitor unconditionally so both HIS and intPC can use it.
+        idle_t = threading.Thread(
+            target=run_idle_monitor,
+            args=(
+                self._idle_stop,
+                self.jiggle_in_progress,
+                self.last_real_input_time,
+            ),
+            daemon=True,
+            name="idle_monitor",
+        )
+        idle_t.start()
+
     # ------------------------------------------------------------------
     # Checkbox callbacks
     # ------------------------------------------------------------------
@@ -245,6 +259,7 @@ class KeepAliveApp:
                 args=(
                     self._his_stop,
                     self.jiggle_lock,
+                    self.last_real_input_time,
                     self.his_var,
                     self.logger.log,
                 ),
@@ -263,19 +278,6 @@ class KeepAliveApp:
             return
         if self.intpc_var.get():
             self._intpc_stop.clear()
-            self._idle_stop.clear()
-
-            idle_t = threading.Thread(
-                target=run_idle_monitor,
-                args=(
-                    self._idle_stop,
-                    self.jiggle_in_progress,
-                    self.last_real_input_time,
-                ),
-                daemon=True,
-                name="idle_monitor",
-            )
-            idle_t.start()
 
             intpc_t = threading.Thread(
                 target=run_intpc_keepalive,
@@ -294,7 +296,6 @@ class KeepAliveApp:
             self.logger.log("intPC keepalive enabled.")
         else:
             self._intpc_stop.set()
-            self._idle_stop.set()
             self.logger.log("intPC keepalive disabled.")
 
     # ------------------------------------------------------------------

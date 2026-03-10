@@ -49,6 +49,7 @@ HIS_CHECK_INTERVAL = 60    # HIS popup check cadence
 INTPC_CHECK_INTERVAL = 300 # intPC popup check cadence (5 min)
 IDLE_THRESHOLD     = 120   # Seconds of inactivity before intPC window switch
 IDLE_POLL_INTERVAL = 3     # Idle monitor polling cadence
+CURSOR_MOVE_IDLE_THRESHOLD = 60  # Seconds of inactivity before moving cursor to corner for screenshot
 
 # =============================================================================
 # GUI
