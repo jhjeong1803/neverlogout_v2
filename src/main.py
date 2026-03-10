@@ -26,8 +26,18 @@ try:
 except ImportError:
     pyautogui = None  # will surface as an error only when a module tries to click
 
+try:
+    import pystray
+    from PIL import Image as _PILImage
+    _PYSTRAY_AVAILABLE = True
+except ImportError:
+    pystray = None  # type: ignore[assignment]
+    _PYSTRAY_AVAILABLE = False
+
 from constants import LOG_MAX_LINES, WINDOW_ALWAYS_ON_TOP
 
+VERSION = "v0.04"
+APP_NAME = f"KeepAlive {VERSION}"
 STAMP = "JJH 2026.03"
 
 # ---------------------------------------------------------------------------
@@ -80,6 +90,23 @@ def parse_args() -> argparse.Namespace:
 
 
 # ---------------------------------------------------------------------------
+# Tray icon image helper
+# ---------------------------------------------------------------------------
+
+def _make_tray_image() -> "_PILImage.Image":  # type: ignore[name-defined]
+    """
+    Return a PIL Image for the system tray icon.
+    Tries to load keepalive.ico; falls back to a plain blue square.
+    """
+    try:
+        img = _PILImage.open(_icon_path())
+        return img.convert("RGBA").resize((64, 64))
+    except Exception:
+        img = _PILImage.new("RGBA", (64, 64), color=(70, 130, 180, 255))
+        return img
+
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 
@@ -108,6 +135,8 @@ class KeepAliveApp:
         self._intpc_stop    = threading.Event()
         self._idle_stop     = threading.Event()
 
+        self._tray_icon = None  # set by _setup_tray() after GUI is built
+
         # ------------------------------------------------------------------
         # GUI
         # ------------------------------------------------------------------
@@ -119,7 +148,7 @@ class KeepAliveApp:
 
     def _build_gui(self) -> None:
         root = self.root
-        root.title("KeepAlive")
+        root.title(APP_NAME)
         root.resizable(False, False)
         root.attributes("-topmost", WINDOW_ALWAYS_ON_TOP)
 
@@ -208,7 +237,15 @@ class KeepAliveApp:
         root.update_idletasks()
         root.geometry("420x305")
 
-        self.logger.log("KeepAlive ready." + (" [DRY RUN]" if self.dry_run else ""))
+        # ---- Minimize-to-tray ----
+        # <Unmap> fires when the window is iconified (minimize button clicked).
+        # We withdraw() it immediately so it disappears from the taskbar entirely.
+        root.bind("<Unmap>", self._on_minimize)
+
+        self.logger.log(f"{APP_NAME} ready." + (" [DRY RUN]" if self.dry_run else ""))
+
+        # ---- System tray ----
+        self._setup_tray()
 
         # Start idle monitor unconditionally so both HIS and intPC can use it.
         idle_t = threading.Thread(
@@ -222,6 +259,49 @@ class KeepAliveApp:
             name="idle_monitor",
         )
         idle_t.start()
+
+    # ------------------------------------------------------------------
+    # System tray
+    # ------------------------------------------------------------------
+
+    def _setup_tray(self) -> None:
+        """Create and start the pystray system tray icon (always visible)."""
+        if not _PYSTRAY_AVAILABLE:
+            return
+        menu = pystray.Menu(
+            pystray.MenuItem("Open", self._restore_window, default=True),
+            pystray.MenuItem("Exit", self._exit_from_tray),
+        )
+        self._tray_icon = pystray.Icon(
+            "keepalive",
+            _make_tray_image(),
+            APP_NAME,
+            menu,
+        )
+        self._tray_icon.run_detached()
+
+    def _on_minimize(self, event: tk.Event) -> None:
+        """Hide the window to the tray when the minimize button is clicked."""
+        if event.widget is not self.root:
+            return
+        # Only intercept a genuine minimize (state='iconic'), not withdraw() calls
+        # (which set state='withdrawn' and would otherwise trigger recursion).
+        if self.root.state() == "iconic" and self._tray_icon is not None:
+            self.root.withdraw()
+
+    def _restore_window(self, icon=None, item=None) -> None:
+        """Restore the window from the tray (safe to call from any thread)."""
+        self.root.after(0, self._show_window)
+
+    def _show_window(self) -> None:
+        """Bring the window back and give it focus (must run on the main thread)."""
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def _exit_from_tray(self, icon=None, item=None) -> None:
+        """Exit triggered from the tray menu (safe to call from any thread)."""
+        self.root.after(0, self._on_close)
 
     # ------------------------------------------------------------------
     # Checkbox callbacks
@@ -303,7 +383,9 @@ class KeepAliveApp:
     # ------------------------------------------------------------------
 
     def _on_close(self) -> None:
-        # Signal all threads to stop, then destroy the window.
+        # Stop the tray icon, signal all threads, then destroy the window.
+        if self._tray_icon is not None:
+            self._tray_icon.stop()
         self._jiggle_stop.set()
         self._his_stop.set()
         self._intpc_stop.set()
